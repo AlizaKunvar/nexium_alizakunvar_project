@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Session } from "@supabase/supabase-js";
-import { supabase } from "@/lib/supabaseClient";
+import { supabase } from "@/lib/supabase";
 
 interface Recipe {
   title: string;
@@ -43,6 +43,14 @@ export default function Home() {
     }
   }
 
+  async function signOut() {
+    await supabase.auth.signOut();
+    setSession(null);
+    setSavedRecipes([]);
+    setRecipe(null);
+    alert("Signed out successfully!");
+  }
+
   async function generateRecipe() {
     if (!ingredients.trim()) {
       setError("Please enter at least one ingredient");
@@ -51,7 +59,7 @@ export default function Home() {
 
     setLoading(true);
     setError(null);
-    
+
     try {
       const response = await fetch("/api/generate", {
         method: "POST",
@@ -62,60 +70,45 @@ export default function Home() {
         }),
       });
 
-      // First get the response as text to handle both JSON and text responses
       const responseText = await response.text();
-      console.log("Raw API response:", responseText);
+      if (!responseText) throw new Error("Server returned an empty response");
 
-      // Check if response is empty
-      if (!responseText) {
-        throw new Error("Server returned an empty response");
-      }
-
-      // Parse the JSON or handle as text if parsing fails
       let data: any;
       try {
         data = JSON.parse(responseText);
-      } catch (err) {
-        console.warn("Response wasn't valid JSON, treating as text");
-        data = { 
+      } catch {
+        data = {
           title: "Generated Recipe",
           steps: [responseText],
           prep_time: "N/A",
-          servings: 1
+          servings: 1,
         };
       }
 
-      // Handle server errors (500, etc.)
       if (!response.ok) {
-        const errorMessage = data?.error || 
-                           data?.message || 
-                           `Server error: ${response.status} ${response.statusText}`;
-        throw new Error(errorMessage);
+        throw new Error(data?.error || data?.message || "Server error");
       }
 
-      // Validate and transform the response with proper typing
       const formattedRecipe: Recipe = {
         title: data?.title || "Untitled Recipe",
         prep_time: data?.prep_time || "Not specified",
         servings: Number(data?.servings) || 1,
-        steps: Array.isArray(data?.steps) 
-              ? data.steps 
-              : (typeof data?.instructions === 'string' 
-                  ? [data.instructions] 
-                  : ["No instructions provided"])
+        steps: Array.isArray(data?.steps)
+          ? data.steps
+          : typeof data?.instructions === "string"
+          ? [data.instructions]
+          : ["No instructions provided"],
       };
 
       setRecipe(formattedRecipe);
-      setError(null);
     } catch (err: unknown) {
-      console.error("Recipe generation failed:", err);
       const errorMessage = err instanceof Error ? err.message : "Failed to generate recipe";
       setError(errorMessage);
       setRecipe({
         title: "Recipe Generation Failed",
         prep_time: "N/A",
         servings: 0,
-        steps: [errorMessage]
+        steps: [errorMessage],
       });
     } finally {
       setLoading(false);
@@ -147,125 +140,139 @@ export default function Home() {
       alert("Recipe saved successfully!");
       getSavedRecipes();
     } catch (err: unknown) {
-      console.error("Save error:", err);
       alert(err instanceof Error ? err.message : "Failed to save recipe");
     }
   }
 
   async function getSavedRecipes() {
     if (!session?.user?.email) return;
-    
+
     try {
       const response = await fetch(`/api/get-recipes?user=${session.user.email}`);
-      if (!response.ok) {
-        throw new Error("Failed to fetch saved recipes");
-      }
-      
+      if (!response.ok) throw new Error("Failed to fetch saved recipes");
+
       const data: Recipe[] = await response.json();
       setSavedRecipes(data || []);
     } catch (err: unknown) {
-      console.error("Fetch error:", err);
       setError(err instanceof Error ? err.message : "Failed to load recipes");
     }
   }
 
   return (
-    <div className="p-6 max-w-xl mx-auto">
-      <h1 className="text-3xl font-bold mb-4 text-center">Recipe Generator</h1>
+    <div
+      className="min-h-screen bg-cover bg-center py-12 px-6 text-white"
+      style={{ backgroundImage: "url('/bg.jpg')" }}
+    >
+      <div className="max-w-3xl mx-auto bg-black/70 shadow-2xl backdrop-blur-lg rounded-3xl p-10 border border-purple-100">
+        <h1 className="text-4xl font-extrabold text-center mb-8 drop-shadow-lg">
+          🍽️ AI Recipe Generator
+        </h1>
 
-      {!session ? (
-        <button
-          onClick={signIn}
-          className="bg-blue-600 text-white px-4 py-2 rounded w-full mb-4 hover:bg-blue-700 transition"
-        >
-          Login with Magic Link
-        </button>
-      ) : (
-        <div className="mb-4">
-          <p className="text-green-600 mb-2">Logged in as: {session.user.email}</p>
+        {!session ? (
           <button
-            onClick={getSavedRecipes}
-            className="bg-gray-800 text-white px-4 py-2 rounded w-full hover:bg-gray-700 transition"
+            onClick={signIn}
+            className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white py-3 px-5 rounded-xl w-full text-lg font-semibold shadow-md transition-all"
           >
-            View Saved Recipes
+            🔐 Login with Magic Link
           </button>
-        </div>
-      )}
-
-      <div className="mb-4">
-        <input
-          type="text"
-          placeholder="Ingredients (comma separated, e.g., chicken, rice, tomatoes)"
-          className="border p-2 w-full rounded mb-2"
-          value={ingredients}
-          onChange={(e) => setIngredients(e.target.value)}
-        />
-        <input
-          type="text"
-          placeholder="Diet (e.g., keto, vegan, vegetarian)"
-          className="border p-2 w-full rounded mb-2"
-          value={diet}
-          onChange={(e) => setDiet(e.target.value)}
-        />
-        <button
-          onClick={generateRecipe}
-          disabled={loading}
-          className={`bg-purple-600 text-white px-4 py-2 rounded w-full mb-2 hover:bg-purple-700 transition ${
-            loading ? "opacity-50 cursor-not-allowed" : ""
-          }`}
-        >
-          {loading ? "Generating..." : "Generate Recipe"}
-        </button>
-        {error && <p className="text-red-500 text-sm">{error}</p>}
-      </div>
-
-      {recipe && (
-        <div className="border p-4 rounded bg-gray-50 mb-4">
-          <h2 className="text-xl font-bold mb-2">{recipe.title}</h2>
-          <div className="grid grid-cols-2 gap-2 mb-3">
-            <p><span className="font-semibold">Prep Time:</span> {recipe.prep_time}</p>
-            <p><span className="font-semibold">Servings:</span> {recipe.servings}</p>
+        ) : (
+          <div className="mb-6 text-center">
+            <p className="font-medium drop-shadow-md mb-2">
+              Logged in as: {session.user.email}
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                onClick={getSavedRecipes}
+                className="bg-gray-900 hover:bg-gray-800 text-white py-3 px-5 rounded-xl w-full font-semibold shadow transition"
+              >
+                📁 View Saved Recipes
+              </button>
+              <button
+                onClick={signOut}
+                className="bg-red-600 hover:bg-red-700 text-white py-3 px-5 rounded-xl w-full font-semibold shadow transition"
+              >
+                🚪 Sign Out
+              </button>
+            </div>
           </div>
-          <div className="mb-3">
-            <h3 className="font-semibold mb-1">Instructions:</h3>
-            <ol className="list-decimal ml-5 space-y-1">
-              {recipe.steps.map((step: string, i: number) => (
-                <li key={i}>{step}</li>
-              ))}
+        )}
+
+        <div className="space-y-4">
+          <input
+            type="text"
+            placeholder="🍅 Ingredients (e.g. chicken, rice)"
+            className="border-2 border-gray-500 bg-white/10 placeholder-white text-white rounded-xl p-3 w-full shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
+            value={ingredients}
+            onChange={(e) => setIngredients(e.target.value)}
+          />
+          <input
+            type="text"
+            placeholder="🥦 Diet Preference (e.g. vegan)"
+            className="border-2 border-gray-500 bg-white/10 placeholder-white text-white rounded-xl p-3 w-full shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
+            value={diet}
+            onChange={(e) => setDiet(e.target.value)}
+          />
+          <button
+            onClick={generateRecipe}
+            disabled={loading}
+            className={`bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-xl w-full font-semibold shadow transition-all ${
+              loading ? "opacity-50 cursor-not-allowed" : ""
+            }`}
+          >
+            {loading ? "⏳ Generating..." : "✨ Generate Recipe"}
+          </button>
+          {error && <p className="text-red-400 font-medium">{error}</p>}
+        </div>
+
+        {recipe && (
+          <div className="mt-10 bg-white/10 border border-purple-400 rounded-2xl p-6 shadow-md transition-all">
+            <h2 className="text-2xl font-bold text-white mb-3">{recipe.title}</h2>
+            <div className="grid grid-cols-2 gap-3 mb-4 text-sm text-gray-200">
+              <p><strong>Prep Time:</strong> {recipe.prep_time}</p>
+              <p><strong>Servings:</strong> {recipe.servings}</p>
+            </div>
+            <h3 className="text-lg font-semibold mb-2">📋 Instructions</h3>
+            <ol className="list-decimal ml-6 space-y-2 text-white">
+              {recipe.steps.map((step, i) => <li key={i}>{step}</li>)}
             </ol>
+            {session && (
+              <button
+                onClick={saveRecipe}
+                className="mt-6 bg-green-600 hover:bg-green-700 text-white py-3 px-5 rounded-xl w-full font-semibold shadow transition"
+              >
+                💾 Save Recipe
+              </button>
+            )}
           </div>
-          {session && (
-            <button
-              onClick={saveRecipe}
-              className="bg-green-600 text-white px-4 py-2 rounded w-full hover:bg-green-700 transition"
-            >
-              Save Recipe
-            </button>
-          )}
-        </div>
-      )}
+        )}
 
-      {savedRecipes.length > 0 && (
-        <div className="mt-6">
-          <h2 className="text-xl font-bold mb-2">Your Saved Recipes</h2>
-          <div className="space-y-3">
-            {savedRecipes.map((r: Recipe, i: number) => (
-              <div key={i} className="border p-3 rounded bg-white shadow-sm">
-                <h3 className="font-bold text-lg">{r.title}</h3>
-                <p className="text-sm text-gray-600">
-                  {r.prep_time} • {r.servings} serving{r.servings !== 1 ? "s" : ""}
-                </p>
-                <button
-                  onClick={() => setRecipe(r)}
-                  className="text-blue-600 text-sm mt-1 hover:underline"
+        {savedRecipes.length > 0 && (
+          <div className="mt-12">
+            <h2 className="text-2xl font-bold text-white mb-4 drop-shadow">
+              📚 Your Saved Recipes
+            </h2>
+            <div className="space-y-4">
+              {savedRecipes.map((r, i) => (
+                <div
+                  key={i}
+                  className="bg-white/10 border border-gray-400 rounded-xl p-4 shadow hover:shadow-lg transition text-white"
                 >
-                  View Details
-                </button>
-              </div>
-            ))}
+                  <h3 className="font-bold text-lg">{r.title}</h3>
+                  <p className="text-sm">
+                    {r.prep_time} • {r.servings} serving{r.servings !== 1 ? "s" : ""}
+                  </p>
+                  <button
+                    onClick={() => setRecipe(r)}
+                    className="text-blue-300 text-sm mt-1 hover:underline"
+                  >
+                    View Details
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
